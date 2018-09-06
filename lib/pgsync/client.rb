@@ -102,16 +102,23 @@ module PgSync
             from_table_count = source.count_table(t)
 
             rails_table = destination.is_rails_table?(t) 
+            has_primary_key = !source.primary_key(t).nil?
+
+            # puts "has_primary_key #{has_primary_key}"
 
             table_diff = ""
             if to_table_count > from_table_count
               table_diff = "***DANGER TRUNCATE REQUIRED***".bold.red
               full_sync_tables << t
             elsif to_table_count < from_table_count
-              table_diff = "<<<NORMAL SYNC>>>".brown
               if (rails_table)
+                table_diff = "<<<RAILS SYNC>>>".blue
                 rails_sync_tables << t
+              elsif (has_primary_key)
+                table_diff = "***NO PK - FULL SYNC***".bold.red
+                full_sync_tables << t
               else
+                table_diff = "<<<NORMAL SYNC>>>".brown
                 sync_tables << t
               end
             else
