@@ -116,7 +116,7 @@ module PgSync
               table_diff = "***TRUNCATE REQUIRED - #{pk_desc}***".bold.red
               full_sync_tables << t
             elsif to_table_count < from_table_count
-              if (rails_table)
+              if (rails_table && has_primary_key)
                 table_diff = "<<<RAILS SYNC>>>".blue
                 rails_sync_tables << t
               elsif (!has_primary_key)
@@ -133,12 +133,12 @@ module PgSync
 
             rails_desc = ""
             if (rails_table)
-              rails_table = "[Rails]".blue
+              rails_desc = "[Rails]".blue
             else
-              rails_table = "[NOT Rails]"
+              rails_desc = "[NOT Rails]"
             end
 
-            log "* Info #{t} \t\t\t\tSRC:#{from_table_count} \t\tLOCAL:#{to_table_count} \t\t#{table_diff} \t\t#{rails_table}"
+            log "* Info #{t} \t\t\t\tSRC:#{from_table_count} \t\tLOCAL:#{to_table_count} \t\t#{table_diff} \t\t#{rails_desc}"
           rescue SignalException => e
             raise e                  
           rescue Exception => exc
