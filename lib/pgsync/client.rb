@@ -94,20 +94,17 @@ module PgSync
         full_sync_tables = [] 
         error_tables = []
 
-        rename_tables = config["rename_tables"]
-        if rename_tables.nil?
-          rename_tables = {}
-        end
-        pp rename_tables
+        # rename_tables = config["rename_tables"]
+        # if rename_tables.nil?
+        #   rename_tables = {}
+        # end
+        # pp rename_tables
           
         tables.each do |table|
           sync_table = table[0]
 
           from_table = sync_table
-          to_table = rename_tables[sync_table]
-          if to_table.nil?
-            to_table = from_table
-          end
+          to_table = destination_table(from_table)
 
           puts "from_table #{from_table.to_s},to_table #{to_table.to_s}" if opts[:debug]
           begin
@@ -151,7 +148,7 @@ module PgSync
               rails_desc = "[NOT Rails]"
             end
 
-            log "* Info #{from_table} \t\t\t\tSRC:#{from_table_count} \t\tLOCAL:#{to_table_count} \t\t#{table_diff} \t\t#{rails_desc}"
+            log "* Info #{from_table} \t\t\t\tSRC:#{from_table_count} \t\tDEST:#{to_table_count} \t\t#{table_diff} \t\t#{rails_desc}"
           rescue SignalException => e
             raise e                  
           rescue Exception => exc
@@ -212,8 +209,14 @@ module PgSync
 
     def confirm_tables_exist(data_source, tables, description)
       tables.keys.each do |table|
-        unless data_source.table_exists?(table)
-          raise PgSync::Error, "Table does not exist in #{description}: #{table}"
+        t = table
+        
+        if (description == "destination")
+          t = destination_table(t)
+        end
+
+        unless data_source.table_exists?(t)
+          raise PgSync::Error, "Table does not exist in #{description}: #{t}"
         end
       end
     ensure
@@ -328,6 +331,20 @@ Options:}
           {}
         end
       end
+    end
+
+    def destination_table(table)
+      rename_tables = config["rename_tables"]
+      if rename_tables.nil?
+        rename_tables = {}
+      end
+      # pp rename_tables
+
+      to_table = rename_tables[table]
+      if to_table.nil?
+        to_table = table
+      end      
+      to_table
     end
 
     def setup(config_file)
