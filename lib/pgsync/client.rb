@@ -119,7 +119,7 @@ module PgSync
               if (rails_table)
                 table_diff = "<<<RAILS SYNC>>>".blue
                 rails_sync_tables << t
-              elsif (has_primary_key)
+              elsif (!has_primary_key)
                 table_diff = "***FULL SYNC - #{pk_desc}***".bold.red
                 full_sync_tables << t
               else
