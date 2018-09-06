@@ -2,7 +2,7 @@ require 'pp'
 
 module PgSync
   class TableSync
-    def sync(mutex, config, table, opts, source_url, destination_url, first_schema)
+    def sync(mutex, config, sync_table, opts, source_url, destination_url, first_schema)
       start_time = Time.now
       source = DataSource.new('SRC',source_url, opts[:debug],timeout: 0)
       destination = DataSource.new('DEST',destination_url, opts[:debug], timeout: 0)
@@ -14,25 +14,42 @@ module PgSync
         btm = PG::BasicTypeMapForResults.new(from_connection)
 
         bad_fields = opts[:no_rules] ? [] : config["data_rules"]
+        pp config
 
-        from_fields = source.columns(table)
-        to_fields = destination.columns(table)
+        rename_tables = config["rename_tables"]
+        if rename_tables.nil?
+          rename_tables = {}
+        end
+        pp rename_tables
 
-        includes_updated_at = source.is_rails_table?(table)
+        from_table = sync_table
+        to_table = rename_tables[sync_table]
+        if to_table.nil?
+          to_table = from_table
+        end
+
+        puts "table:#{sync_table}"
+        puts "from_table:#{from_table}"
+        puts "to_table:#{to_table}"
+
+        from_fields = source.columns(from_table)
+        to_fields = destination.columns(to_table)
+
+        includes_updated_at = source.is_rails_table?(from_table)
 
         shared_fields = to_fields & from_fields
         extra_fields = to_fields - from_fields
         missing_fields = from_fields - to_fields
 
-        from_sequences = source.sequences(table, shared_fields)
-        to_sequences = destination.sequences(table, shared_fields)
+        from_sequences = source.sequences(from_table, shared_fields)
+        to_sequences = destination.sequences(to_table, shared_fields)
         shared_sequences = to_sequences & from_sequences
         extra_sequences = to_sequences - from_sequences
         missing_sequences = from_sequences - to_sequences
 
         sql_clause = String.new
 
-        table_name = table.sub("#{first_schema}.", "")
+        table_name = from_table.sub("#{first_schema}.", "")
 
         mutex.synchronize do
           log "* Syncing #{table_name}"
@@ -56,7 +73,7 @@ module PgSync
 
           valid_copy_fields_a = shared_fields
 
-          copy_fields_a = shared_fields.map { |f| f2 = bad_fields.to_a.find { |bf, _| rule_match?(table, f, bf) }; f2 ? "#{apply_strategy(f2[1], table, f)} AS #{quote_ident(f)}" : "#{quote_ident_full(table)}.#{quote_ident(f)}" }
+          copy_fields_a = shared_fields.map { |f| f2 = bad_fields.to_a.find { |bf, _| rule_match?(from_table, f, bf) }; f2 ? "#{apply_strategy(f2[1], from_table, f)} AS #{quote_ident(f)}" : "#{quote_ident_full(from_table)}.#{quote_ident(f)}" }
           copy_fields = copy_fields_a.join(", ")
           fields = shared_fields.map { |f| quote_ident(f) }.join(", ")
 
@@ -65,14 +82,14 @@ module PgSync
             seq_values[seq] = source.last_value(seq)
           end
 
-          copy_to_command = "COPY (SELECT #{copy_fields} FROM #{quote_ident_full(table)}#{sql_clause}) TO STDOUT"
+          copy_to_command = "COPY (SELECT #{copy_fields} FROM #{quote_ident_full(from_table)}#{sql_clause}) TO STDOUT"
           if opts[:in_batches]
             raise PgSync::Error, "Cannot use --overwrite with --in-batches" if opts[:overwrite]
 
             if opts[:ignore_same_size]
               begin
-                to_table_count = destination.count_table(table)
-                from_table_count = source.count_table(table)
+                to_table_count = destination.count_table(to_table)
+                from_table_count = source.count_table(from_table)
 
                 puts "to_table_count: #{to_table_count} , from_table_count: #{from_table_count}"
                 if (to_table_count > from_table_count)
@@ -93,31 +110,33 @@ module PgSync
               end
             end            
 
-            primary_key = source.primary_key(table)
+            primary_key = source.primary_key(from_table)
             raise PgSync::Error, "No primary key" unless primary_key
 
-            destination.truncate(table) if opts[:truncate]
+            destination.truncate(to_table) if opts[:truncate]
 
             if (includes_updated_at)
-              source_max_updated_at = source.max_updated_at(table)
-              destination_max_updated_at = destination.max_updated_at(table)
+              source_max_updated_at = source.max_updated_at(from_table)
+              destination_max_updated_at = destination.max_updated_at(to_table)
 
               puts "source_max_updated_at #{source_max_updated_at}"
               puts "destination_max_updated_at #{destination_max_updated_at}"
             end
 
-            puts "primary_key #{primary_key}"
+            puts "primary_key:#{primary_key}"
+            puts "includes_updated_at:#{includes_updated_at}"
 
-            destination_max_updated_at = destination.max_updated_at(table) if includes_updated_at
+            destination_max_updated_at = destination.max_updated_at(to_table) if includes_updated_at
+            puts "destination_max_updated_at:#{destination_max_updated_at}"
 
             if opts[:rails] && includes_updated_at && !opts[:truncate] && destination_max_updated_at > 0
-              source_max_updated_at = source.max_updated_at(table)
+              source_max_updated_at = source.max_updated_at(from_table)
               
               if source_max_updated_at == destination_max_updated_at
                 puts "RAILS TABLE IN SYNC. SKIPPING"
                 return
               else
-                sql_command = "SELECT #{copy_fields} FROM #{quote_ident_full(table)} where extract(epoch from updated_at) >= #{destination_max_updated_at} "     
+                sql_command = "SELECT #{copy_fields} FROM #{quote_ident_full(from_table)} where extract(epoch from updated_at) >= #{destination_max_updated_at} "     
 
                 res = from_connection.exec(sql_command)
                 if (!btm.nil?)
@@ -128,7 +147,7 @@ module PgSync
                 
                 res.each do |row|
                   insert_sql = """
-                      INSERT INTO #{table} (#{valid_copy_fields_a.join(",")}) 
+                      INSERT INTO #{to_table} (#{valid_copy_fields_a.join(",")}) 
                       VALUES (#{bind_vars(valid_copy_fields_a)})
                       ON CONFLICT (#{primary_key}) DO UPDATE 
                         SET #{conflict_setters(primary_key,valid_copy_fields_a)};
@@ -139,11 +158,11 @@ module PgSync
                 end       
               end        
             else
-              from_id = source.max_id(table, primary_key)
-              to_id = destination.max_id(table, primary_key) + 1
+              from_id = source.max_id(from_table, primary_key)
+              to_id = destination.max_id(to_table, primary_key) + 1
             
               if to_id == 1
-                from_min_id = source.min_id(table, primary_key)
+                from_min_id = source.min_id(from_table, primary_key)
                 to_id = from_min_id if from_min_id > 0
               end
 
@@ -163,12 +182,12 @@ module PgSync
                 # TODO be smarter for advance sql clauses
                 batch_sql_clause = " #{sql_clause.length > 0 ? "#{sql_clause} AND" : "WHERE"} #{where}"
 
-                batch_sql_copy_command = "SELECT #{copy_fields} FROM #{quote_ident_full(table)}#{batch_sql_clause}"
+                batch_sql_copy_command = "SELECT #{copy_fields} FROM #{quote_ident_full(from_table)}#{batch_sql_clause}"
 
                 batch_copy_to_command = "COPY (#{batch_sql_copy_command}) TO STDOUT"
 
                 puts "batch_copy_to_command: #{batch_copy_to_command}"
-                to_sql = "COPY #{quote_ident_full(table)} (#{fields}) FROM STDIN"
+                to_sql = "COPY #{quote_ident_full(to_table)} (#{fields}) FROM STDIN"
                 puts "to_sql: #{to_sql}"
 
                 to_connection.copy_data(to_sql) do
@@ -189,7 +208,7 @@ module PgSync
             end
             
           elsif !opts[:truncate] && (opts[:overwrite] || opts[:preserve] || !sql_clause.empty?)
-            primary_key = destination.primary_key(table)
+            primary_key = destination.primary_key(from_table)
             raise PgSync::Error, "No primary key" unless primary_key
 
             temp_table = "pgsync_#{rand(1_000_000_000)}"
@@ -203,7 +222,7 @@ module PgSync
               file.rewind
 
               # create a temp table
-              to_connection.exec("CREATE TEMPORARY TABLE #{quote_ident_full(temp_table)} AS SELECT * FROM #{quote_ident_full(table)} WITH NO DATA")
+              to_connection.exec("CREATE TEMPORARY TABLE #{quote_ident_full(temp_table)} AS SELECT * FROM #{quote_ident_full(to_table)} WITH NO DATA")
 
               # load file
               to_connection.copy_data "COPY #{quote_ident_full(temp_table)} (#{fields}) FROM STDIN" do
@@ -214,11 +233,11 @@ module PgSync
 
               if opts[:preserve]
                 # insert into
-                to_connection.exec("INSERT INTO #{quote_ident_full(table)} (SELECT * FROM #{quote_ident_full(temp_table)} WHERE NOT EXISTS (SELECT 1 FROM #{quote_ident_full(table)} WHERE #{quote_ident_full(table)}.#{quote_ident(primary_key)} = #{quote_ident_full(temp_table)}.#{quote_ident(primary_key)}))")
+                to_connection.exec("INSERT INTO #{quote_ident_full(to_table)} (SELECT * FROM #{quote_ident_full(temp_table)} WHERE NOT EXISTS (SELECT 1 FROM #{quote_ident_full(to_table)} WHERE #{quote_ident_full(to_table)}.#{quote_ident(primary_key)} = #{quote_ident_full(temp_table)}.#{quote_ident(primary_key)}))")
               else
                 to_connection.transaction do
-                  to_connection.exec("DELETE FROM #{quote_ident_full(table)} WHERE #{quote_ident(primary_key)} IN (SELECT #{quote_ident(primary_key)} FROM #{quote_ident_full(temp_table)})")
-                  to_connection.exec("INSERT INTO #{quote_ident_full(table)} (SELECT * FROM #{quote_ident(temp_table)})")
+                  to_connection.exec("DELETE FROM #{quote_ident_full(to_table)} WHERE #{quote_ident(primary_key)} IN (SELECT #{quote_ident(primary_key)} FROM #{quote_ident_full(temp_table)})")
+                  to_connection.exec("INSERT INTO #{quote_ident_full(to_table)} (SELECT * FROM #{quote_ident(temp_table)})")
                 end
               end
             ensure
@@ -226,12 +245,12 @@ module PgSync
                file.unlink
             end
           elsif opts[:ignore_same_size]
-            to_table_count = destination.count_table(table)
-            from_table_count = source.count_table(table)
+            to_table_count = destination.count_table(to_table)
+            from_table_count = source.count_table(from_table)
             puts "to_table_count: #{to_table_count} , from_table_count: #{from_table_count}"
             if (from_table_count != to_table_count)
-              destination.truncate(table)
-              to_connection.copy_data "COPY #{quote_ident_full(table)} (#{fields}) FROM STDIN" do
+              destination.truncate(to_table)
+              to_connection.copy_data "COPY #{quote_ident_full(to_table)} (#{fields}) FROM STDIN" do
                 from_connection.copy_data copy_to_command do
                   while (row = from_connection.get_copy_data)
                     to_connection.put_copy_data(row)
@@ -239,11 +258,11 @@ module PgSync
                 end
               end
             else
-              puts "Skipping table #{table} as row counts are the same."
+              puts "Skipping table #{from_table} as row counts are the same."
             end            
           else
-            destination.truncate(table)
-            to_connection.copy_data "COPY #{quote_ident_full(table)} (#{fields}) FROM STDIN" do
+            destination.truncate(to_table)
+            to_connection.copy_data "COPY #{quote_ident_full(to_table)} (#{fields}) FROM STDIN" do
               from_connection.copy_data copy_to_command do
                 while (row = from_connection.get_copy_data)
                   to_connection.put_copy_data(row)
