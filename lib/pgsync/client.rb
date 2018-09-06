@@ -93,16 +93,29 @@ module PgSync
         sync_tables = []
         full_sync_tables = [] 
         error_tables = []
+
+        rename_tables = config["rename_tables"]
+        if rename_tables.nil?
+          rename_tables = {}
+        end
+        pp rename_tables
           
         tables.each do |table|
-          t = table[0]
-          # puts "table #{t.to_s}"
-          begin
-            to_table_count = destination.count_table(t)
-            from_table_count = source.count_table(t)
+          sync_table = table[0]
 
-            rails_table = destination.is_rails_table?(t) 
-            has_primary_key = !source.primary_key(t).nil?
+          from_table = sync_table
+          to_table = rename_tables[sync_table]
+          if to_table.nil?
+            to_table = from_table
+          end
+
+          puts "from_table #{from_table.to_s},to_table #{to_table.to_s}" if opts[:debug]
+          begin
+            to_table_count = destination.count_table(to_table)
+            from_table_count = source.count_table(from_table)
+
+            has_primary_key = !source.primary_key(from_table).nil?
+            rails_table = destination.is_rails_table?(to_table) 
 
             # puts "has_primary_key #{has_primary_key}"
 
@@ -114,21 +127,21 @@ module PgSync
             table_diff = ""
             if to_table_count > from_table_count
               table_diff = "***TRUNCATE REQUIRED - #{pk_desc}***".bold.red
-              full_sync_tables << t
+              full_sync_tables << from_table
             elsif to_table_count < from_table_count
               if (rails_table && has_primary_key)
                 table_diff = "<<<RAILS SYNC>>>".blue
-                rails_sync_tables << t
+                rails_sync_tables << from_table
               elsif (!has_primary_key)
                 table_diff = "***FULL SYNC - #{pk_desc}***".bold.red
-                full_sync_tables << t
+                full_sync_tables << from_table
               else
                 table_diff = "<<<NORMAL SYNC>>>".brown
-                sync_tables << t
+                sync_tables << from_table
               end
             else
               table_diff = "NO CHANGE".green
-              no_changes_tables << t
+              no_changes_tables << from_table
             end
 
             rails_desc = ""
@@ -138,13 +151,13 @@ module PgSync
               rails_desc = "[NOT Rails]"
             end
 
-            log "* Info #{t} \t\t\t\tSRC:#{from_table_count} \t\tLOCAL:#{to_table_count} \t\t#{table_diff} \t\t#{rails_desc}"
+            log "* Info #{from_table} \t\t\t\tSRC:#{from_table_count} \t\tLOCAL:#{to_table_count} \t\t#{table_diff} \t\t#{rails_desc}"
           rescue SignalException => e
             raise e                  
           rescue Exception => exc
             puts exc.message
-            puts "Skipping table #{t}"
-            error_tables << t
+            puts "Skipping table #{from_table}"
+            error_tables << from_table
           end
         end
 
