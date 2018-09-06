@@ -1,18 +1,25 @@
+require 'pp'
+
 module PgSync
   class TableSync
     def sync(mutex, config, table, opts, source_url, destination_url, first_schema)
       start_time = Time.now
-      source = DataSource.new(source_url, timeout: 0)
-      destination = DataSource.new(destination_url, timeout: 0)
+      source = DataSource.new('SRC',source_url, timeout: 0)
+      destination = DataSource.new('DEST',destination_url, timeout: 0)
 
       begin
         from_connection = source.conn
         to_connection = destination.conn
 
+        btm = PG::BasicTypeMapForResults.new(from_connection)
+
         bad_fields = opts[:no_rules] ? [] : config["data_rules"]
 
         from_fields = source.columns(table)
         to_fields = destination.columns(table)
+
+        includes_updated_at = source.is_rails_table?(table)
+
         shared_fields = to_fields & from_fields
         extra_fields = to_fields - from_fields
         missing_fields = from_fields - to_fields
@@ -44,7 +51,13 @@ module PgSync
         end
 
         if shared_fields.any?
-          copy_fields = shared_fields.map { |f| f2 = bad_fields.to_a.find { |bf, _| rule_match?(table, f, bf) }; f2 ? "#{apply_strategy(f2[1], table, f)} AS #{quote_ident(f)}" : "#{quote_ident_full(table)}.#{quote_ident(f)}" }.join(", ")
+          # puts "shared_fields"
+          # pp shared_fields
+
+          valid_copy_fields_a = shared_fields
+
+          copy_fields_a = shared_fields.map { |f| f2 = bad_fields.to_a.find { |bf, _| rule_match?(table, f, bf) }; f2 ? "#{apply_strategy(f2[1], table, f)} AS #{quote_ident(f)}" : "#{quote_ident_full(table)}.#{quote_ident(f)}" }
+          copy_fields = copy_fields_a.join(", ")
           fields = shared_fields.map { |f| quote_ident(f) }.join(", ")
 
           seq_values = {}
@@ -56,48 +69,125 @@ module PgSync
           if opts[:in_batches]
             raise PgSync::Error, "Cannot use --overwrite with --in-batches" if opts[:overwrite]
 
+            if opts[:ignore_same_size]
+              begin
+                to_table_count = destination.count_table(table)
+                from_table_count = source.count_table(table)
+
+                puts "to_table_count: #{to_table_count} , from_table_count: #{from_table_count}"
+                if (to_table_count > from_table_count)
+                  if opts[:preserve]
+                     puts "Skipping #{table} as truncate is required. FIX MANUALLY"
+                     return
+                  else
+                    puts "truncating #{table}. to table should not exceed from table"
+                    destination.truncate(table)
+                  end
+                elsif (from_table_count == to_table_count)
+                  puts "Skipping table #{table}"
+                  return
+                end
+              rescue Exception => exc
+                puts exc.message
+                puts "Failed to do quick check. Doing normal sync"
+              end
+            end            
+
             primary_key = source.primary_key(table)
             raise PgSync::Error, "No primary key" unless primary_key
 
             destination.truncate(table) if opts[:truncate]
 
-            from_max_id = source.max_id(table, primary_key)
-            to_max_id = destination.max_id(table, primary_key) + 1
+            if (includes_updated_at)
+              source_max_updated_at = source.max_updated_at(table)
+              destination_max_updated_at = destination.max_updated_at(table)
 
-            if to_max_id == 1
-              from_min_id = source.min_id(table, primary_key)
-              to_max_id = from_min_id if from_min_id > 0
+              puts "source_max_updated_at #{source_max_updated_at}"
+              puts "destination_max_updated_at #{destination_max_updated_at}"
             end
 
-            starting_id = to_max_id
-            batch_size = opts[:batch_size]
+            puts "primary_key #{primary_key}"
 
-            i = 1
-            batch_count = ((from_max_id - starting_id + 1) / batch_size.to_f).ceil
+            destination_max_updated_at = destination.max_updated_at(table) if includes_updated_at
 
-            while starting_id <= from_max_id
-              where = "#{quote_ident(primary_key)} >= #{starting_id} AND #{quote_ident(primary_key)} < #{starting_id + batch_size}"
-              log "    #{i}/#{batch_count}: #{where}"
+            if opts[:rails] && includes_updated_at && !opts[:truncate] && destination_max_updated_at > 0
+              source_max_updated_at = source.max_updated_at(table)
+              
+              if source_max_updated_at == destination_max_updated_at
+                puts "RAILS TABLE IN SYNC. SKIPPING"
+                return
+              else
+                sql_command = "SELECT #{copy_fields} FROM #{quote_ident_full(table)} where extract(epoch from updated_at) >= #{destination_max_updated_at} "     
 
-              # TODO be smarter for advance sql clauses
-              batch_sql_clause = " #{sql_clause.length > 0 ? "#{sql_clause} AND" : "WHERE"} #{where}"
+                res = from_connection.exec(sql_command)
+                if (!btm.nil?)
+                  res.type_map = btm
+                end
+                pp res
+                puts "Effected row count: #{res.cmd_tuples}"
+                
+                res.each do |row|
+                  insert_sql = """
+                      INSERT INTO #{table} (#{valid_copy_fields_a.join(",")}) 
+                      VALUES (#{bind_vars(valid_copy_fields_a)})
+                      ON CONFLICT (#{primary_key}) DO UPDATE 
+                        SET #{conflict_setters(primary_key,valid_copy_fields_a)};
+                  """
+                  # puts "insert_sql:#{insert_sql}"
+                  to_connection.exec_params(insert_sql , format_values(valid_copy_fields_a,row))
+                  # puts "inserted...."
+                end       
+              end        
+            else
+              from_id = source.max_id(table, primary_key)
+              to_id = destination.max_id(table, primary_key) + 1
+            
+              if to_id == 1
+                from_min_id = source.min_id(table, primary_key)
+                to_id = from_min_id if from_min_id > 0
+              end
 
-              batch_copy_to_command = "COPY (SELECT #{copy_fields} FROM #{quote_ident_full(table)}#{batch_sql_clause}) TO STDOUT"
-              to_connection.copy_data "COPY #{quote_ident_full(table)} (#{fields}) FROM STDIN" do
-                from_connection.copy_data batch_copy_to_command do
-                  while (row = from_connection.get_copy_data)
-                    to_connection.put_copy_data(row)
+              starting_id = to_id
+              batch_size = opts[:batch_size]
+
+              i = 1
+              batch_count = ((from_id - starting_id + 1) / batch_size.to_f).ceil
+
+              puts "starting_id: #{starting_id}"
+              puts "from_id: #{from_id}"
+
+              while starting_id <= from_id
+                where = "#{quote_ident(primary_key)} >= #{starting_id} AND #{quote_ident(primary_key)} < #{starting_id + batch_size}"
+                log "    #{i}/#{batch_count}: #{where}"
+
+                # TODO be smarter for advance sql clauses
+                batch_sql_clause = " #{sql_clause.length > 0 ? "#{sql_clause} AND" : "WHERE"} #{where}"
+
+                batch_sql_copy_command = "SELECT #{copy_fields} FROM #{quote_ident_full(table)}#{batch_sql_clause}"
+
+                batch_copy_to_command = "COPY (#{batch_sql_copy_command}) TO STDOUT"
+
+                puts "batch_copy_to_command: #{batch_copy_to_command}"
+                to_sql = "COPY #{quote_ident_full(table)} (#{fields}) FROM STDIN"
+                puts "to_sql: #{to_sql}"
+
+                to_connection.copy_data(to_sql) do
+                  from_connection.copy_data(batch_copy_to_command) do
+                    while (row = from_connection.get_copy_data)
+                        to_connection.put_copy_data(row)
+                    end
                   end
                 end
-              end
 
-              starting_id += batch_size
-              i += 1
+                starting_id += batch_size
+                i += 1
 
-              if opts[:sleep] && starting_id <= from_max_id
-                sleep(opts[:sleep])
+                if opts[:sleep] && starting_id <= from_id
+                  sleep(opts[:sleep])
+                end
               end
             end
+            
           elsif !opts[:truncate] && (opts[:overwrite] || opts[:preserve] || !sql_clause.empty?)
             primary_key = destination.primary_key(table)
             raise PgSync::Error, "No primary key" unless primary_key
@@ -135,6 +225,22 @@ module PgSync
                file.close
                file.unlink
             end
+          elsif opts[:ignore_same_size]
+            to_table_count = destination.count_table(table)
+            from_table_count = source.count_table(table)
+            puts "to_table_count: #{to_table_count} , from_table_count: #{from_table_count}"
+            if (from_table_count != to_table_count)
+              destination.truncate(table)
+              to_connection.copy_data "COPY #{quote_ident_full(table)} (#{fields}) FROM STDIN" do
+                from_connection.copy_data copy_to_command do
+                  while (row = from_connection.get_copy_data)
+                    to_connection.put_copy_data(row)
+                  end
+                end
+              end
+            else
+              puts "Skipping table #{table} as row counts are the same."
+            end            
           else
             destination.truncate(table)
             to_connection.copy_data "COPY #{quote_ident_full(table)} (#{fields}) FROM STDIN" do
@@ -159,6 +265,38 @@ module PgSync
     end
 
     private
+
+    def bind_vars(fields)
+      fields.each_with_index.map { |e,i| "$#{i+1}"}.join(",")
+    end
+
+    def format_values(fields,row)
+      # puts "format_values"
+      # pp fields
+      # pp row
+      # t.strftime("%Y-%m-%d %H:%M:%S.%6N %Z")
+       # => "2016-10-12 12:07:20.967813 CEST" 
+      # row.values
+
+      fields.map{ |f| 
+        if ((f == "updated_at" || f == "created_at") && !row[f].nil?)
+          row[f].strftime("%Y-%m-%d %H:%M:%S.%6N %Z")
+        else
+          row[f]
+        end
+      }
+    end
+
+    def conflict_setters(primary_key,fields)
+      setter_fields = fields.select{|i| i != primary_key}
+      setter_fields.map{ |f| " #{f} = excluded.#{f} "}.join(",")
+    end
+
+    # market_pair_id = excluded.market_pair_id, 
+    #                         market_id = excluded.market_id,
+    #                         message = excluded.message,
+    #                         created_at = excluded.created_at,
+    #                         updated_at = excluded.updated_at
 
     # TODO better performance
     def rule_match?(table, column, rule)

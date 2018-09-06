@@ -1,3 +1,5 @@
+require 'table_print'
+
 module PgSync
   class Client
     def initialize(args)
@@ -36,10 +38,10 @@ module PgSync
         raise PgSync::Error, "Usage:\n    pgsync [options]"
       end
 
-      source = DataSource.new(opts[:from])
+      source = DataSource.new('SRC',opts[:from])
       raise PgSync::Error, "No source" unless source.exists?
 
-      destination = DataSource.new(opts[:to])
+      destination = DataSource.new('DEST',opts[:to])
       raise PgSync::Error, "No destination" unless destination.exists?
 
       begin
@@ -78,6 +80,61 @@ module PgSync
           end
 
         pretty_list list_items
+      elsif opts[:list_tables]
+        puts "Listing tables."
+        sync_tables = []
+        full_sync_tables = [] 
+          
+        # with_connection(from_uri) do |from_connection|
+            # with_connection(to_uri) do |to_connection|
+              tables.each do |table|
+                t = table[0]
+                # puts "table #{t.to_s}"
+                begin
+                  to_table_count = destination.count_table(t) #count_table(to_connection,t)
+                  from_table_count = source.count_table(t)  #count_table(from_connection,t)
+
+                  rails_table = destination.is_rails_table?(t) 
+
+                  table_diff = ""
+                  if to_table_count > from_table_count
+                    table_diff = "***DANGER TRUNCATE REQUIRED***".bold.red
+                    full_sync_tables << t
+                  elsif to_table_count < from_table_count
+                    table_diff = "<<<NORMAL SYNC>>>".brown
+                    sync_tables << t
+                  else
+                    table_diff = "NO CHANGE".green
+                  end
+
+                  rails_desc = ""
+                  if (rails_table)
+                    rails_table = "[Rails]".blue
+                  end
+
+                  log "* Info #{t} \t\t\t\tSRC:#{from_table_count} \t\tLOCAL:#{to_table_count} \t\t#{table_diff} \t\t#{rails_table}"
+                rescue SignalException => e
+                  raise e                  
+                rescue Exception => exc
+                  puts exc.message
+                  puts "Skipping table #{t}"
+                end
+              end
+            # end
+          # end
+
+        puts "Sync Tables #{sync_tables.join(",")}"
+        puts "Full Sync Tables #{full_sync_tables.join(",")}"       
+      elsif opts[:activity]
+        source = DataSource.new('SRC',opts[:from])
+        raise PgSync::Error, "No source" unless source.exists?
+
+        # destination = DataSource.new(opts[:to])
+        # raise PgSync::Error, "No destination" unless destination.exists?
+
+        sql = "SELECT * FROM pg_stat_activity WHERE query NOT ILIKE '%pg_stat_activity%'"
+        result = source.execute(sql)
+        tp result
       else
         if opts[:schema_first] || opts[:schema_only]
           if opts[:preserve]
@@ -171,6 +228,8 @@ Options:}
         o.boolean "--to-safe", "accept danger", default: false
         o.boolean "--debug", "debug", default: false
         o.boolean "--list", "list", default: false
+        o.boolean "--list-tables", "list tables", default: false
+        o.boolean "--activity", "show activity", default: false
         o.boolean "--overwrite", "overwrite existing rows", default: false, help: false
         o.boolean "--preserve", "preserve existing rows", default: false
         o.boolean "--truncate", "truncate existing rows", default: false
@@ -182,6 +241,8 @@ Options:}
         o.boolean "--setup", "setup", default: false, help: false
         o.boolean "--in-batches", "in batches", default: false, help: false
         o.integer "--batch-size", "batch size", default: 10000, help: false
+        o.boolean "--ignore-same-size", "ignore tables with same size", default: false
+        o.boolean "--rails", "use rails format. if it has a updated_at colum then use it", default: false
         o.float "--sleep", "sleep", default: 0, help: false
         o.on "-v", "--version", "print the version" do
           log PgSync::VERSION

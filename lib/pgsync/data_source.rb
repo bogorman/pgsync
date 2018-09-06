@@ -1,9 +1,13 @@
+require 'memoist'
+
 module PgSync
   class DataSource
+    extend Memoist
     attr_reader :url
 
-    def initialize(source, timeout: 3)
-      @url = resolve_url(source)
+    def initialize(source_name, source_details, timeout: 3)
+      @source_name = source_name
+      @url = resolve_url(source_details)
       @timeout = timeout
     end
 
@@ -43,6 +47,7 @@ module PgSync
       query = "SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2"
       execute(query, table.split(".", 2)).map { |row| row["column_name"] }
     end
+    memoize :columns
 
     def sequences(table, columns)
       execute("SELECT #{columns.map { |f| "pg_get_serial_sequence(#{escape("#{quote_ident_full(table)}")}, #{escape(f)}) AS #{f}" }.join(", ")}")[0].values.compact
@@ -56,12 +61,24 @@ module PgSync
       execute("SELECT MIN(#{quote_ident(primary_key)}) FROM #{quote_ident_full(table)}#{sql_clause}")[0]["min"].to_i
     end
 
+    def max_updated_at(table)
+      execute("SELECT extract(epoch from max(updated_at)) as max FROM #{quote_ident_full(table)}")[0]["max"].to_f
+    end
+
     def last_value(seq)
       execute("select last_value from #{seq}")[0]["last_value"]
     end
 
     def truncate(table)
       execute("TRUNCATE #{quote_ident_full(table)} CASCADE")
+    end
+
+    def is_rails_table?(table)
+        #uses the standard naming convestion.
+        fields = columns(table) 
+        includes_updated_at = fields.include?("updated_at")
+        includes_id = fields.include?("id")    
+        includes_updated_at && includes_id
     end
 
     # http://stackoverflow.com/a/20537829
@@ -135,6 +152,19 @@ module PgSync
       @search_path ||= execute("SELECT current_schemas(true)")[0]["current_schemas"][1..-2].split(",")
     end
 
+    def count_table(table)
+      #this can be slow on big tables
+      execute("SELECT COUNT(*) FROM #{table}").to_a[0]["count"].to_i
+    end       
+
+    def execute(query, params = [])
+      start = Time.now
+      result = conn.exec_params(query, params).to_a
+      took = Time.now - start
+      puts "[#{@source_name} #{took}s]: #{query.cyan}"
+      result
+    end
+
     private
 
     def table_set
@@ -147,10 +177,6 @@ module PgSync
 
     def quote_ident_full(ident)
       ident.split(".", 2).map { |v| quote_ident(v) }.join(".")
-    end
-
-    def execute(query, params = [])
-      conn.exec_params(query, params).to_a
     end
 
     def quote_ident(value)
