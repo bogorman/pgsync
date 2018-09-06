@@ -82,49 +82,67 @@ module PgSync
         pretty_list list_items
       elsif opts[:list_tables]
         puts "Listing tables."
+
+        no_changes_tables = []
+        rails_sync_tables = []
         sync_tables = []
         full_sync_tables = [] 
+        error_tables = []
           
-        # with_connection(from_uri) do |from_connection|
-            # with_connection(to_uri) do |to_connection|
-              tables.each do |table|
-                t = table[0]
-                # puts "table #{t.to_s}"
-                begin
-                  to_table_count = destination.count_table(t) #count_table(to_connection,t)
-                  from_table_count = source.count_table(t)  #count_table(from_connection,t)
+        tables.each do |table|
+          t = table[0]
+          # puts "table #{t.to_s}"
+          begin
+            to_table_count = destination.count_table(t)
+            from_table_count = source.count_table(t)
 
-                  rails_table = destination.is_rails_table?(t) 
+            rails_table = destination.is_rails_table?(t) 
 
-                  table_diff = ""
-                  if to_table_count > from_table_count
-                    table_diff = "***DANGER TRUNCATE REQUIRED***".bold.red
-                    full_sync_tables << t
-                  elsif to_table_count < from_table_count
-                    table_diff = "<<<NORMAL SYNC>>>".brown
-                    sync_tables << t
-                  else
-                    table_diff = "NO CHANGE".green
-                  end
-
-                  rails_desc = ""
-                  if (rails_table)
-                    rails_table = "[Rails]".blue
-                  end
-
-                  log "* Info #{t} \t\t\t\tSRC:#{from_table_count} \t\tLOCAL:#{to_table_count} \t\t#{table_diff} \t\t#{rails_table}"
-                rescue SignalException => e
-                  raise e                  
-                rescue Exception => exc
-                  puts exc.message
-                  puts "Skipping table #{t}"
-                end
+            table_diff = ""
+            if to_table_count > from_table_count
+              table_diff = "***DANGER TRUNCATE REQUIRED***".bold.red
+              full_sync_tables << t
+            elsif to_table_count < from_table_count
+              table_diff = "<<<NORMAL SYNC>>>".brown
+              if (rails_table)
+                rails_sync_tables << t
+              else
+                sync_tables << t
               end
-            # end
-          # end
+            else
+              table_diff = "NO CHANGE".green
+              no_changes_tables << t
+            end
 
-        puts "Sync Tables #{sync_tables.join(",")}"
-        puts "Full Sync Tables #{full_sync_tables.join(",")}"       
+            rails_desc = ""
+            if (rails_table)
+              rails_table = "[Rails]".blue
+            else
+              rails_table = "[NOT Rails]"
+            end
+
+            log "* Info #{t} \t\t\t\tSRC:#{from_table_count} \t\tLOCAL:#{to_table_count} \t\t#{table_diff} \t\t#{rails_table}"
+          rescue SignalException => e
+            raise e                  
+          rescue Exception => exc
+            puts exc.message
+            puts "Skipping table #{t}"
+            error_tables << t
+          end
+        end
+
+        puts "-------------------------------------"
+        puts "Tables in Sync: #{no_changes_tables.join(",")}"
+        puts "-------------------------------------"
+        puts "Rails Sync Tables: #{rails_sync_tables.join(",")}"
+        puts "-------------------------------------"
+        puts "Normal PGSync Sync Tables: #{sync_tables.join(",")}"
+        puts "-------------------------------------"
+        puts "Truncate & Sync Tables: #{full_sync_tables.join(",")}"    
+        puts "-------------------------------------"
+        puts "Error Tables: #{error_tables.join(",")}"    
+        puts "-------------------------------------"
+
       elsif opts[:activity]
         source = DataSource.new('SRC',opts[:from],opts[:debug])
         raise PgSync::Error, "No source" unless source.exists?
