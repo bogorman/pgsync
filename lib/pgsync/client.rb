@@ -38,10 +38,15 @@ module PgSync
         raise PgSync::Error, "Usage:\n    pgsync [options]"
       end
 
-      source = DataSource.new('SRC',opts[:from],opts[:debug])
+      timeout = 5
+      if opts[:timeout].nil?
+        timeout = opts[:timeout].to_i
+      end
+
+      source = DataSource.new('SRC',opts[:from],opts[:debug],timeout)
       raise PgSync::Error, "No source" unless source.exists?
 
-      destination = DataSource.new('DEST',opts[:to],opts[:debug])
+      destination = DataSource.new('DEST',opts[:to],opts[:debug],timeout)
       raise PgSync::Error, "No destination" unless destination.exists?
 
       begin
@@ -134,7 +139,7 @@ module PgSync
         puts "-------------------------------------"
         puts "Tables in Sync: #{no_changes_tables.join(",")}"
         puts "-------------------------------------"
-        puts "Rails Sync Tables: #{rails_sync_tables.join(",")}"
+        puts "Rails Sync Tables: pgsync --rails --preserve --in-batches #{rails_sync_tables.join(",")}"
         puts "-------------------------------------"
         puts "Normal PGSync Sync Tables: #{sync_tables.join(",")}"
         puts "-------------------------------------"
@@ -144,7 +149,12 @@ module PgSync
         puts "-------------------------------------"
 
       elsif opts[:activity]
-        source = DataSource.new('SRC',opts[:from],opts[:debug])
+        timeout = 5
+        if opts[:timeout].nil?
+          timeout = opts[:timeout].to_i
+        end
+
+        source = DataSource.new('SRC',opts[:from],opts[:debug],timeout)
         raise PgSync::Error, "No source" unless source.exists?
 
         # destination = DataSource.new(opts[:to])
@@ -259,6 +269,7 @@ Options:}
         o.boolean "--setup", "setup", default: false, help: false
         o.boolean "--in-batches", "in batches", default: false, help: false
         o.integer "--batch-size", "batch size", default: 10000, help: false
+        o.integer "--timeout", "timeout", default: 5, help: false
         o.boolean "--ignore-same-size", "ignore tables with same size", default: false
         o.boolean "--rails", "use rails format. if it has a updated_at colum then use it", default: false
         o.float "--sleep", "sleep", default: 0, help: false

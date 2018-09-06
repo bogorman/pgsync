@@ -4,8 +4,13 @@ module PgSync
   class TableSync
     def sync(mutex, config, sync_table, opts, source_url, destination_url, first_schema)
       start_time = Time.now
-      source = DataSource.new('SRC',source_url, opts[:debug],timeout: 0)
-      destination = DataSource.new('DEST',destination_url, opts[:debug], timeout: 0)
+      timeout = 5
+      if opts[:timeout].nil?
+        timeout = opts[:timeout].to_i
+      end
+
+      source = DataSource.new('SRC',source_url, opts[:debug],timeout)
+      destination = DataSource.new('DEST',destination_url, opts[:debug], timeout)
 
       begin
         from_connection = source.conn

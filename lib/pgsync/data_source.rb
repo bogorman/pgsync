@@ -5,7 +5,7 @@ module PgSync
     extend Memoist
     attr_reader :url
 
-    def initialize(source_name, source_details, debug, timeout: 3)
+    def initialize(source_name, source_details, debug, timeout)
       @source_name = source_name
       @url = resolve_url(source_details)
       @timeout = timeout
