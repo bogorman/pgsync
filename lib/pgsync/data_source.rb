@@ -5,10 +5,11 @@ module PgSync
     extend Memoist
     attr_reader :url
 
-    def initialize(source_name, source_details, timeout: 3)
+    def initialize(source_name, source_details, debug, timeout: 3)
       @source_name = source_name
       @url = resolve_url(source_details)
       @timeout = timeout
+      @debug = debug
     end
 
     def exists?
@@ -161,7 +162,9 @@ module PgSync
       start = Time.now
       result = conn.exec_params(query, params).to_a
       took = Time.now - start
-      puts "[#{@source_name} #{took}s]: #{query.cyan}"
+      if @debug
+        puts "[#{@source_name} #{took}s]: #{query.cyan}"
+      end
       result
     end
 

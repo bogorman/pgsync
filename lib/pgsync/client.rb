@@ -38,10 +38,10 @@ module PgSync
         raise PgSync::Error, "Usage:\n    pgsync [options]"
       end
 
-      source = DataSource.new('SRC',opts[:from])
+      source = DataSource.new('SRC',opts[:from],opts[:debug])
       raise PgSync::Error, "No source" unless source.exists?
 
-      destination = DataSource.new('DEST',opts[:to])
+      destination = DataSource.new('DEST',opts[:to],opts[:debug])
       raise PgSync::Error, "No destination" unless destination.exists?
 
       begin
@@ -126,7 +126,7 @@ module PgSync
         puts "Sync Tables #{sync_tables.join(",")}"
         puts "Full Sync Tables #{full_sync_tables.join(",")}"       
       elsif opts[:activity]
-        source = DataSource.new('SRC',opts[:from])
+        source = DataSource.new('SRC',opts[:from],opts[:debug])
         raise PgSync::Error, "No source" unless source.exists?
 
         # destination = DataSource.new(opts[:to])
