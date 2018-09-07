@@ -36,6 +36,7 @@ module PgSync
         puts "table:#{sync_table}"
         puts "from_table:#{from_table}"
         puts "to_table:#{to_table}"
+        puts "copy_sequences: #{opts[:copy_sequences]}"
 
         from_fields = source.columns(from_table)
         to_fields = destination.columns(to_table)
@@ -48,6 +49,7 @@ module PgSync
 
         from_sequences = source.sequences(from_table, shared_fields)
         to_sequences = destination.sequences(to_table, shared_fields)
+
         shared_sequences = to_sequences & from_sequences
         extra_sequences = to_sequences - from_sequences
         missing_sequences = from_sequences - to_sequences
@@ -255,28 +257,36 @@ module PgSync
             puts "to_table_count: #{to_table_count} , from_table_count: #{from_table_count}"
             if (from_table_count != to_table_count)
               destination.truncate(to_table)
-              to_connection.copy_data "COPY #{quote_ident_full(to_table)} (#{fields}) FROM STDIN" do
+              copy_sql = "COPY #{quote_ident_full(to_table)} (#{fields}) FROM STDIN"
+              puts "STARTING: #{copy_sql}"
+              to_connection.copy_data copy_sql do
                 from_connection.copy_data copy_to_command do
                   while (row = from_connection.get_copy_data)
                     to_connection.put_copy_data(row)
                   end
                 end
               end
+              puts "DONE"
             else
               puts "Skipping table #{from_table} as row counts are the same."
             end            
           else
             destination.truncate(to_table)
-            to_connection.copy_data "COPY #{quote_ident_full(to_table)} (#{fields}) FROM STDIN" do
+            copy_sql = "COPY #{quote_ident_full(to_table)} (#{fields}) FROM STDIN"
+            puts "STARTING: #{copy_sql}"
+            to_connection.copy_data copy_sql do
               from_connection.copy_data copy_to_command do
                 while (row = from_connection.get_copy_data)
                   to_connection.put_copy_data(row)
                 end
               end
             end
+            puts "DONE"
           end
-          seq_values.each do |seq, value|
-            to_connection.exec("SELECT setval(#{escape(seq)}, #{escape(value)})")
+          if (opts[:copy_sequences])
+            seq_values.each do |seq, value|
+              to_connection.exec("SELECT setval(#{escape(seq)}, #{escape(value)})")
+            end
           end
         end
         mutex.synchronize do

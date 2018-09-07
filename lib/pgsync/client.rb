@@ -300,6 +300,7 @@ Options:}
         o.integer "--timeout", "timeout", default: 5, help: false
         o.boolean "--ignore-same-size", "ignore tables with same size", default: false
         o.boolean "--rails", "use rails format. if it has a updated_at colum then use it", default: false
+        o.boolean "--copy-sequences", "copy sequences", default: false
         o.float "--sleep", "sleep", default: 0, help: false
         o.on "-v", "--version", "print the version" do
           log PgSync::VERSION
