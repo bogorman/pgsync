@@ -166,6 +166,7 @@ module PgSync
         puts "Normal PGSync Sync Tables:  pgsync --rails --preserve --in-batches #{sync_tables.sort_by(&:last).map(&:first).join(",")}"
         puts "-------------------------------------"
         puts "Truncate & Sync Tables: pgsync #{full_sync_tables.sort_by(&:last).map(&:first).join(",")}"    
+        puts " size_info #{full_sync_tables.sort_by(&:last).map{|i| i.join("=")}.join(",")}"    
         puts "-------------------------------------"
         puts "Error Tables: #{error_tables.join(",")}"    
         puts "-------------------------------------"
