@@ -124,21 +124,21 @@ module PgSync
             table_diff = ""
             if to_table_count > from_table_count
               table_diff = "***TRUNCATE REQUIRED - #{pk_desc}***".bold.red
-              full_sync_tables << from_table
+              full_sync_tables << [from_table,from_table_count]
             elsif to_table_count < from_table_count
               if (rails_table && has_primary_key)
                 table_diff = "<<<RAILS SYNC>>>".blue
-                rails_sync_tables << from_table
+                rails_sync_tables << [from_table,from_table_count]
               elsif (!has_primary_key)
                 table_diff = "***FULL SYNC - #{pk_desc}***".bold.red
-                full_sync_tables << from_table
+                full_sync_tables << [from_table,from_table_count]
               else
                 table_diff = "<<<NORMAL SYNC>>>".brown
-                sync_tables << from_table
+                sync_tables << [from_table,from_table_count]
               end
             else
               table_diff = "NO CHANGE".green
-              no_changes_tables << from_table
+              no_changes_tables << [from_table,from_table_count]
             end
 
             rails_desc = ""
@@ -159,13 +159,13 @@ module PgSync
         end
 
         puts "-------------------------------------"
-        puts "Tables in Sync: #{no_changes_tables.join(",")}"
+        puts "Tables in Sync: #{no_changes_tables.sort_by(&:last).map(&:first).join(",")}"
         puts "-------------------------------------"
-        puts "Rails Sync Tables: pgsync --rails --preserve --in-batches #{rails_sync_tables.join(",")}"
+        puts "Rails Sync Tables: pgsync --rails --preserve --in-batches #{rails_sync_tables.sort_by(&:last).map(&:first).join(",")}"
         puts "-------------------------------------"
-        puts "Normal PGSync Sync Tables: #{sync_tables.join(",")}"
+        puts "Normal PGSync Sync Tables:  pgsync --rails --preserve --in-batches #{sync_tables.sort_by(&:last).map(&:first).join(",")}"
         puts "-------------------------------------"
-        puts "Truncate & Sync Tables: #{full_sync_tables.join(",")}"    
+        puts "Truncate & Sync Tables: pgsync #{full_sync_tables.sort_by(&:last).map(&:first).join(",")}"    
         puts "-------------------------------------"
         puts "Error Tables: #{error_tables.join(",")}"    
         puts "-------------------------------------"
