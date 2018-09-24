@@ -142,7 +142,7 @@ module PgSync
               source_max_updated_at = source.max_updated_at(from_table)
               
               if source_max_updated_at == destination_max_updated_at && source_max_id == destination_max_id
-                puts "RAILS TABLE IN SYNC. SKIPPING"
+                puts "RAILS TABLE IN SYNC. SKIPPING id:#{source_max_id} updated_at:#{source_max_updated_at}"
                 return
               else
                 sql_command = """
@@ -150,6 +150,9 @@ module PgSync
                     WHERE extract(epoch from updated_at) >= #{destination_max_updated_at} 
                     OR id >= #{destination_max_id}     
                 """
+                if opts[:debug]
+                  puts "SQL:"+sql_command
+                end
                 res = from_connection.exec(sql_command.strip)
                 if (!btm.nil?)
                   res.type_map = btm
