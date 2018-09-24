@@ -1,8 +1,8 @@
-require 'memoist'
+# require 'memoist'
 
 module PgSync
   class DataSource
-    extend Memoist
+    # extend Memoist
     attr_reader :url
 
     def initialize(source_name, source_details, debug, timeout)
@@ -48,7 +48,7 @@ module PgSync
       query = "SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2"
       execute(query, table.split(".", 2)).map { |row| row["column_name"] }
     end
-    memoize :columns
+    # memoize :columns
 
     def sequences(table, columns)
       execute("SELECT #{columns.map { |f| "pg_get_serial_sequence(#{escape("#{quote_ident_full(table)}")}, #{escape(f)}) AS #{f}" }.join(", ")}")[0].values.compact
@@ -163,7 +163,7 @@ module PgSync
       result = conn.exec_params(query, params).to_a
       took = Time.now - start
       if @debug
-        puts "[#{@source_name} #{took}s]: #{query.cyan}"
+        puts "[#{@source_name} #{took}s]: #{query.cyan} #{params}"
       end
       result
     end
