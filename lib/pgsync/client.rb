@@ -91,7 +91,8 @@ module PgSync
         no_changes_tables = []
         rails_sync_tables = []
         sync_tables = []
-        full_sync_tables = [] 
+        full_sync_tables_no_pk = [] 
+        full_sync_tables_has_pk = [] 
         error_tables = []
 
         # rename_tables = config["rename_tables"]
@@ -124,14 +125,19 @@ module PgSync
             table_diff = ""
             if to_table_count > from_table_count
               table_diff = "***TRUNCATE REQUIRED - #{pk_desc}***".bold.red
-              full_sync_tables << [from_table,from_table_count]
+              if (has_primary_key)
+                full_sync_tables_has_pk << [from_table,from_table_count]
+              else
+                full_sync_tables_no_pk << [from_table,from_table_count]
+              end
             elsif to_table_count < from_table_count
               if (rails_table && has_primary_key)
                 table_diff = "<<<RAILS SYNC>>>".blue
                 rails_sync_tables << [from_table,from_table_count]
               elsif (!has_primary_key)
                 table_diff = "***FULL SYNC - #{pk_desc}***".bold.red
-                full_sync_tables << [from_table,from_table_count]
+                # full_sync_tables << [from_table,from_table_count]
+                full_sync_tables_no_pk << [from_table,from_table_count]
               else
                 table_diff = "<<<NORMAL SYNC>>>".brown
                 sync_tables << [from_table,from_table_count]
@@ -165,8 +171,11 @@ module PgSync
         puts "-------------------------------------"
         puts "Normal PGSync Sync Tables:  pgsync --rails --preserve --in-batches #{sync_tables.sort_by(&:last).map(&:first).join(",")}"
         puts "-------------------------------------"
-        puts "Truncate & Sync Tables: pgsync #{full_sync_tables.sort_by(&:last).map(&:first).join(",")}"    
-        puts " size_info #{full_sync_tables.sort_by(&:last).map{|i| i.join("=")}.join(",")}"    
+        puts "Truncate & Sync Tables With PK: pgsync --truncate --in-batches #{full_sync_tables_has_pk.sort_by(&:last).map(&:first).join(",")}"    
+        puts " size_info #{full_sync_tables_has_pk.sort_by(&:last).map{|i| i.join("=")}.join(",")}"    
+        puts "-------------------------------------"
+        puts "Truncate & Sync Tables NO PK : pgsync --truncate --in-batches #{full_sync_tables_no_pk.sort_by(&:last).map(&:first).join(",")}"    
+        puts " size_info #{full_sync_tables_no_pk.sort_by(&:last).map{|i| i.join("=")}.join(",")}"            
         puts "-------------------------------------"
         puts "Error Tables: #{error_tables.join(",")}"    
         puts "-------------------------------------"
