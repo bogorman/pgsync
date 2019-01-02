@@ -31,6 +31,10 @@ module PgSync
 
     protected
 
+    def quote_string(s)
+      s.gsub(/\\/, '\&\&').gsub(/'/, "''")
+    end
+    
     def escape(value)
       if value.is_a?(String)
         "'#{quote_string(value)}'"
