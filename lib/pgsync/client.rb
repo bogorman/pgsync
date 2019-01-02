@@ -217,8 +217,11 @@ module PgSync
 
       elsif opts[:reset_sequences]
         tables.each do |table|
-          table_name = table.first
-          puts "table #{table_name}"
+          sync_table = table[0]
+          puts "sync table #{sync_table}"
+
+          from_table = sync_table
+          to_table = destination_table(from_table)
 
           from_fields = source.columns(from_table)
           to_fields = destination.columns(to_table)
