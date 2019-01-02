@@ -180,6 +180,35 @@ module PgSync
         puts "Error Tables: #{error_tables.join(",")}"    
         puts "-------------------------------------"
 
+      elsif opts[:snapshot_rails]
+        snapshot = {}
+
+        tables.each do |table|
+          puts "snapshot rails"
+
+          snapshot[table] = {
+            :max_id => destination.max_id(to_table,"id"),
+            :max_updated_at => destination.max_updated_at(table)
+          }
+        end
+        pp snapshot
+        File.write("snapshot.json", snapshot.to_json)
+
+      elsif opts[:reset_snapshot_rails]
+        snapshot = JSON.parse(File.read("snapshot.json"))
+
+        snapshot.keys.each do |k|
+          v = snapshot[k]
+          pp v
+
+          puts "delete from #{k} where id > #{v[:max_id]}"
+          result = to_connection.exec("DELETE FROM #{quote_ident_full(k)} WHERE id > #{v[:max_id]}")
+          pp result
+
+          puts "delete from #{k} where updated_at > #{v[:max_updated_at]}"
+          to_connection.exec("DELETE FROM #{quote_ident_full(k)} WHERE updated_at > #{v[:max_updated_at]}")
+          pp pp result
+        end
       elsif opts[:activity]
         timeout = 5
         if opts[:timeout].nil?
@@ -311,6 +340,8 @@ Options:}
         o.boolean "--ignore-same-size", "ignore tables with same size", default: false
         o.boolean "--rails", "use rails format. if it has a updated_at colum then use it", default: false
         o.boolean "--copy-sequences", "copy sequences", default: false
+        o.boolean "--snapshot-rails", "snapshot the rails tables by id,updated_at", default: false
+        o.boolean "--reset-snapshot-rails", "reset snapshot rails tables by id,updated_at", default: false
         o.float "--sleep", "sleep", default: 0, help: false
         o.on "-v", "--version", "print the version" do
           log PgSync::VERSION
