@@ -34,7 +34,7 @@ module PgSync
     def quote_string(s)
       s.gsub(/\\/, '\&\&').gsub(/'/, "''")
     end
-    
+
     def escape(value)
       if value.is_a?(String)
         "'#{quote_string(value)}'"
@@ -228,6 +228,8 @@ module PgSync
         end
 
       elsif opts[:reset_sequences]
+        to_connection = destination.conn
+                
         tables.each do |table|
           sync_table = table[0]
           puts "sync table #{sync_table}"
@@ -252,6 +254,7 @@ module PgSync
 
           seq_values.each do |seq, value|
             sql = "SELECT setval(#{escape(seq)}, #{escape(value)})"
+            puts "sql #{sql}"
             res = to_connection.exec(sql)
             pp
           end
