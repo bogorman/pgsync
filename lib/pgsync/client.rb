@@ -31,6 +31,14 @@ module PgSync
 
     protected
 
+    def escape(value)
+      if value.is_a?(String)
+        "'#{quote_string(value)}'"
+      else
+        value
+      end
+    end    
+
     def sync(args, opts)
       start_time = Time.now
 
