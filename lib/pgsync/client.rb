@@ -217,21 +217,29 @@ module PgSync
 
       elsif opts[:reset_sequences]
         tables.each do |table|
-          puts "reset_sequences #{table.first}"
           table_name = table.first
+          puts "table #{table_name}"
 
-          to_connection = destination.conn
-          
+          from_fields = source.columns(from_table)
+          to_fields = destination.columns(to_table)
+
+          shared_fields = to_fields & from_fields
+
+          from_sequences = source.sequences(from_table, shared_fields)
+          to_sequences = destination.sequences(to_table, shared_fields)
+
+          shared_sequences = to_sequences & from_sequences
+
           seq_values = {}
           shared_sequences.each do |seq|
-            # seq_values[seq] = source.last_value(seq)
-          # end
-          # seq_values.each do |seq, value|
+            seq_values[seq] = source.last_value(seq)
+          end
 
-            seq_value = source.last_value(seq)
-
-            to_connection.exec("SELECT setval(#{escape(seq)}, #{escape(seq_value)})")
-          end          
+          seq_values.each do |seq, value|
+            sql = "SELECT setval(#{escape(seq)}, #{escape(value)})"
+            res = to_connection.exec(sql)
+            pp
+          end
 
         end
 
