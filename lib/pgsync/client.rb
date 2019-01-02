@@ -185,10 +185,12 @@ module PgSync
 
         tables.each do |table|
           puts "snapshot rails"
+          pp table
+          table_name = table.first
 
-          snapshot[table] = {
-            :max_id => destination.max_id(to_table,"id"),
-            :max_updated_at => destination.max_updated_at(table)
+          snapshot[table_name] = {
+            :max_id => destination.max_id(table_name,"id"),
+            :max_updated_at => destination.max_updated_at(table_name)
           }
         end
         pp snapshot
@@ -197,18 +199,42 @@ module PgSync
       elsif opts[:reset_snapshot_rails]
         snapshot = JSON.parse(File.read("snapshot.json"))
 
+        to_connection = destination.conn
+
         snapshot.keys.each do |k|
+          puts "K: #{k}"
           v = snapshot[k]
           pp v
 
-          puts "delete from #{k} where id > #{v[:max_id]}"
-          result = to_connection.exec("DELETE FROM #{quote_ident_full(k)} WHERE id > #{v[:max_id]}")
+          puts "delete from #{k} where id > #{v['max_id']}"
+          result = to_connection.exec("DELETE FROM #{k} WHERE id > #{v['max_id']}")
           pp result
 
-          puts "delete from #{k} where updated_at > #{v[:max_updated_at]}"
-          to_connection.exec("DELETE FROM #{quote_ident_full(k)} WHERE updated_at > #{v[:max_updated_at]}")
+          puts "delete from #{k} where extract(epoch from updated_at) > #{v['max_updated_at']}"
+          to_connection.exec("DELETE FROM #{k} WHERE extract(epoch from updated_at) > #{v['max_updated_at']}")
           pp pp result
         end
+
+      elsif opts[:reset_sequences]
+        tables.each do |table|
+          puts "reset_sequences #{table.first}"
+          table_name = table.first
+
+          to_connection = destination.conn
+          
+          seq_values = {}
+          shared_sequences.each do |seq|
+            # seq_values[seq] = source.last_value(seq)
+          # end
+          # seq_values.each do |seq, value|
+
+            seq_value = source.last_value(seq)
+
+            to_connection.exec("SELECT setval(#{escape(seq)}, #{escape(seq_value)})")
+          end          
+
+        end
+
       elsif opts[:activity]
         timeout = 5
         if opts[:timeout].nil?
@@ -342,6 +368,7 @@ Options:}
         o.boolean "--copy-sequences", "copy sequences", default: false
         o.boolean "--snapshot-rails", "snapshot the rails tables by id,updated_at", default: false
         o.boolean "--reset-snapshot-rails", "reset snapshot rails tables by id,updated_at", default: false
+        o.boolean "--reset-sequences", "reset sequences back to source", default: false
         o.float "--sleep", "sleep", default: 0, help: false
         o.on "-v", "--version", "print the version" do
           log PgSync::VERSION
